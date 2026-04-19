@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AR Hybrid Practice</title>
+    <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.147.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.147.0/examples/jsm/",
+        "mindar-image-three": "https://cdn.jsdelivr.net/npm/mind-ar@1.2.2/dist/mindar-image-three.prod.js"
+      }
+    }
+    </script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #000;
+            color: white;
+            font-family: sans-serif;
+        }
+
+        #container {
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
+        }
+
+        button {
+            padding: 10px 20px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="ui">
+        <button id="startButton">Iniciar Cámara y AR</button>
+        <p id="status"></p>
+    </div>
+    <div id="container"></div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { MindARThree } from 'mindar-image-three';
+
+        const startButton = document.querySelector("#startButton");
+        const status = document.querySelector("#status");
+
+        const start = async () => {
+            status.innerText = "Iniciando motor...";
+
+            const mindarThree = new MindARThree({
+                container: document.querySelector("#container"),
+                imageTargetSrc: './targets.mind',
+            });
+
+            const { renderer, scene, camera } = mindarThree;
+
+            // Luz
+            const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
+            scene.add(light);
+
+            // Cubo
+            const geometry = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+            const material = new THREE.MeshStandardMaterial({ color: ff0000 });
+            const mesh = new THREE.Mesh(geometry, material);
+
+            const anchor = mindarThree.addAnchor(0);
+            anchor.group.add(mesh);
+
+            try {
+                await mindarThree.start();
+                status.innerText = "¡Escaneando! Apunta al marcador";
+                startButton.style.display = "none";
+
+                renderer.setAnimationLoop(() => {
+                    renderer.render(scene, camera);
+                });
+            } catch (err) {
+                status.innerText = "Error: " + err.message;
+                console.error(err);
+            }
+        }
+
+        startButton.addEventListener('click', start);
+    </script>
+</body>
+
+</html>
