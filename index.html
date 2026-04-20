@@ -89,6 +89,7 @@
                 // Ajusta la escala (muchos modelos vienen gigantes o diminutos)
                 model.scale.set(0.1, 0.1, 0.1); 
                 model.position.set(0, 0, 0);
+                model.rotation.x = Math.PI / 2;
                 
                 anchor.group.add(model);
             });
