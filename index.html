@@ -84,7 +84,7 @@
             const loader = new GLTFLoader();
             const anchor = mindarThree.addAnchor(0);
     
-            loader.load('./tu_modelo.glb', (gltf) => {
+            loader.load('./cat.glb', (gltf) => {
                 const model = gltf.scene;
                 // Ajusta la escala (muchos modelos vienen gigantes o diminutos)
                 model.scale.set(0.1, 0.1, 0.1); 
