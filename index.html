@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Tetra Pak AR - Interactive Mode</title>
+    <title>Tetra Pak AR - Fix Audio & Drag</title>
     <script type="importmap">
     {
       "imports": {
@@ -13,7 +13,7 @@
     }
     </script>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; font-family: monospace; }
+        body { margin: 0; overflow: hidden; background: #000; font-family: monospace; touch-action: none; }
         #container { width: 100vw; height: 100vh; }
         #ui {
             position: absolute; top: 0; left: 0; z-index: 10; width: 100%; height: 100%;
@@ -43,10 +43,10 @@
 
         let mindarThree, scene, camera, renderer;
         const mixers = [];
+        const sounds = [];
         const clickableModels = [];
-        let isLogging = false; // Control de anti-spam para logs
+        let isLogging = false;
         
-        // Variables para Arrastre (Drag)
         let selectedObject = null;
         const raycaster = new THREE.Raycaster();
         const mouse = new THREE.Vector2();
@@ -54,10 +54,10 @@
         const intersectionPoint = new THREE.Vector3();
 
         const CONFIG = [
-            { model: 'robot.glb', scale: 0.5 },
-            { model: 'trex.glb', scale: 0.8 },
-            { model: 'skeleton.glb', scale: 1.0 },
-            { model: 'cat.glb', scale: 0.5 }
+            { model: 'robot.glb', sound: 's1.mp3', scale: 0.15 },
+            { model: 'trex.glb', sound: 's2.mp3', scale: 0.06 },
+            { model: 'skeleton.glb', sound: 's3.mp3', scale: 0.2 },
+            { model: 'cat.glb', sound: 's4.mp3', scale: 0.3 }
         ];
 
         const start = async () => {
@@ -71,10 +71,25 @@
             ({ renderer, scene, camera } = mindarThree);
             scene.add(new THREE.HemisphereLight(0xffffff, 0xbbbbff, 2));
 
+            // INICIALIZACIÓN DE AUDIO
+            const listener = new THREE.AudioListener();
+            camera.add(listener);
+            const audioLoader = new THREE.AudioLoader();
+
             const loader = new GLTFLoader();
 
             CONFIG.forEach((data, index) => {
                 const anchor = mindarThree.addAnchor(index);
+
+                // Cargar sonido correspondiente
+                const sound = new THREE.Audio(listener);
+                audioLoader.load(data.sound, (buffer) => {
+                    sound.setBuffer(buffer);
+                    sound.setLoop(false);
+                    sound.setVolume(0.5);
+                });
+                sounds[index] = sound;
+
                 loader.load(data.model, (gltf) => {
                     const model = gltf.scene;
                     model.scale.set(data.scale, data.scale, data.scale);
@@ -91,15 +106,20 @@
                 });
 
                 anchor.onTargetFound = () => {
+                    if (sounds[index]) sounds[index].play(); // Play al detectar
                     if (!isLogging) {
                         enviarLogApp('DETECCION', data.model, index);
                         bloquearLogsTemporales();
                     }
                 };
+
+                anchor.onTargetLost = () => {
+                    if (sounds[index]) sounds[index].pause(); // Pause al perder
+                };
             });
 
-            // LÓGICA DE INTERACCIÓN (Pulsar y Arrastrar)
-            window.addEventListener('pointerdown', (e) => {
+            // SOPORTE TÁCTIL PARA ARRASTRE
+            const onPointerDown = (e) => {
                 actualizarMouse(e);
                 raycaster.setFromCamera(mouse, camera);
                 const intersects = raycaster.intersectObjects(clickableModels, true);
@@ -107,7 +127,6 @@
                 if (intersects.length > 0) {
                     let target = intersects[0].object;
                     while (target.parent && !target.userData.name) target = target.parent;
-                    
                     selectedObject = target;
 
                     if (!isLogging) {
@@ -115,20 +134,20 @@
                         bloquearLogsTemporales();
                     }
                 }
-            });
+            };
 
-            window.addEventListener('pointermove', (e) => {
+            const onPointerMove = (e) => {
                 if (!selectedObject) return;
                 actualizarMouse(e);
                 raycaster.setFromCamera(mouse, camera);
-                
-                // Arrastre simple sobre el plano Z=0 del ancla
                 if (raycaster.ray.intersectPlane(dragPlane, intersectionPoint)) {
                     selectedObject.position.x = intersectionPoint.x;
                     selectedObject.position.y = intersectionPoint.y;
                 }
-            });
+            };
 
+            window.addEventListener('pointerdown', onPointerDown);
+            window.addEventListener('pointermove', onPointerMove);
             window.addEventListener('pointerup', () => { selectedObject = null; });
 
             await mindarThree.start();
@@ -142,13 +161,15 @@
         }
 
         const actualizarMouse = (e) => {
-            mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
-            mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+            const x = e.touches ? e.touches[0].clientX : e.clientX;
+            const y = e.touches ? e.touches[0].clientY : e.clientY;
+            mouse.x = (x / window.innerWidth) * 2 - 1;
+            mouse.y = -(y / window.innerHeight) * 2 + 1;
         };
 
         const bloquearLogsTemporales = () => {
             isLogging = true;
-            setTimeout(() => { isLogging = false; }, 3000); // Bloqueo de 3 segundos
+            setTimeout(() => { isLogging = false; }, 3000);
         };
 
         const enviarLogApp = (tipo, modelo, index) => {
