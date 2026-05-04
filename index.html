@@ -107,9 +107,8 @@
                     status.innerText = `Detectado: ${data.model}`;
                     if (sounds[i] && !sounds[i].isPlaying) sounds[i].play();
                     
-                    // Registro automático de detección
                     if (!isLogging) {
-                        enviarLog('DETECCION_AUTO', data.model);
+                        enviarLog('DETECCION_AUTO', data.model, i); // Pasamos el índice 'i'
                         bloquearLogs();
                     }
                 };
@@ -176,12 +175,13 @@
             });
         };
 
-        const enviarLog = (accion, modelo) => {
+        const enviarLog = (accion, modelo, index) => {
             if (window.ReactNativeWebView) {
                 window.ReactNativeWebView.postMessage(JSON.stringify({
                     tipo: 'ACCION_USUARIO',
                     detalle: accion,
-                    modelo: modelo
+                    modelo: modelo,
+                    targetIndex: index // Cambiado a targetIndex para coincidir con la App
                 }));
             }
         };
