@@ -1,7 +1,9 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Tetra Pak AR - Multi-User Mode</title>
     <script type="importmap">
     {
       "imports": {
@@ -11,65 +13,157 @@
       }
     }
     </script>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: monospace; }
+        #container { width: 100vw; height: 100vh; }
+        #ui {
+            position: absolute; top: 0; left: 0; z-index: 10; width: 100%; height: 100%;
+            display: flex; justify-content: center; align-items: center;
+            background: rgba(0, 0, 0, 0.8); color: #00ff00;
+        }
+        .btn-start {
+            padding: 15px 30px; background: #00ff00; color: black;
+            border: none; border-radius: 5px; cursor: pointer; font-weight: bold;
+        }
+    </style>
 </head>
+
 <body>
+    <div id="ui">
+        <div style="text-align: center;">
+            <h2>SISTEMA AR MULTIUSUARIO</h2>
+            <button id="startButton" class="btn-start">INICIAR ESCANEO</button>
+            <p id="status">Esperando permisos...</p>
+        </div>
+    </div>
     <div id="container"></div>
+
     <script type="module">
         import * as THREE from 'three';
         import { MindARThree } from 'mindar-image-three';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-        const mindarThree = new MindARThree({
-            container: document.querySelector("#container"),
-            imageTargetSrc: './targetstetra.mind',
-            filterMinCF: 0.0001, filterBeta: 0.001
-        });
+        let mindarThree, scene, camera, renderer;
+        const mixers = [];
+        const sounds = [];
+        const clickableModels = []; // Para detectar toques
+        const status = document.querySelector("#status");
 
-        const { renderer, scene, camera } = mindarThree;
+        // Raycaster para interacciones táctiles
         const raycaster = new THREE.Raycaster();
         const mouse = new THREE.Vector2();
-        const models = [];
+
+        const CONFIG = [
+            { model: 'robot.glb', sound: 's1.mp3', scale: 0.15 },
+            { model: 'trex.glb', sound: 's2.mp3', scale: 0.06 },
+            { model: 'skeleton.glb', sound: 's3.mp3', scale: 0.2 },
+            { model: 'cat.glb', sound: 's4.mp3', scale: 0.3 }
+        ];
 
         const start = async () => {
-            const loader = new GLTFLoader();
-            const config = [
-                { m: 'robot.glb', s: 0.15 }, { m: 'trex.glb', s: 0.06 },
-                { m: 'skeleton.glb', s: 0.2 }, { m: 'cat.glb', s: 0.3 }
-            ];
+            status.innerText = "Inicializando hardware...";
 
-            config.forEach((data, i) => {
-                const anchor = mindarThree.addAnchor(i);
-                loader.load(data.m, (gltf) => {
-                    const model = gltf.scene;
-                    model.scale.set(data.s, data.s, data.s);
-                    model.userData = { name: data.m }; // ID para el log
-                    anchor.group.add(model);
-                    models.push(model);
-                });
+            mindarThree = new MindARThree({
+                container: document.querySelector("#container"),
+                imageTargetSrc: './targetstetra.mind',
+                filterMinCF: 0.0001, // Alta sensibilidad para el cubo
+                filterBeta: 0.001
             });
 
-            // Evento de pulsación
+            ({ renderer, scene, camera } = mindarThree);
+
+            const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 2);
+            scene.add(light);
+
+            const loader = new GLTFLoader();
+            const audioLoader = new THREE.AudioLoader();
+            const listener = new THREE.AudioListener();
+            camera.add(listener);
+
+            CONFIG.forEach((data, index) => {
+                const anchor = mindarThree.addAnchor(index);
+
+                const s = new THREE.Audio(listener);
+                audioLoader.load(data.sound, (buffer) => { s.setBuffer(buffer); });
+                sounds[index] = s;
+
+                loader.load(data.model, (gltf) => {
+                    const model = gltf.scene;
+                    model.scale.set(data.scale, data.scale, data.scale);
+                    model.rotation.x = Math.PI / 2;
+                    
+                    // Guardamos metadatos para el log
+                    model.userData = { name: data.model, id: index };
+                    
+                    anchor.group.add(model);
+                    clickableModels.push(model); // Hacerlo "tirable" por el raycaster
+
+                    if (gltf.animations.length > 0) {
+                        const mixer = new THREE.AnimationMixer(model);
+                        mixer.clipAction(gltf.animations[0]).play();
+                        mixers.push(mixer);
+                    }
+                });
+
+                anchor.onTargetFound = () => {
+                    status.innerText = `Cara detectada: ${data.model}`;
+                    if (sounds[index] && !sounds[index].isPlaying) sounds[index].play();
+                    
+                    // Log de detección simple
+                    enviarLogApp('DETECCION', data.model, index);
+                };
+
+                anchor.onTargetLost = () => {
+                    if (sounds[index]) sounds[index].pause();
+                };
+            });
+
+            // Listener para pulsaciones en la pantalla (Multi-Usuario)
             window.addEventListener('click', (e) => {
                 mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
                 mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+
                 raycaster.setFromCamera(mouse, camera);
-                const intersects = raycaster.intersectObjects(models, true);
-                
+                const intersects = raycaster.intersectObjects(clickableModels, true);
+
                 if (intersects.length > 0) {
-                    const obj = intersects[0].object;
-                    // Enviar mensaje a React Native
-                    window.parent.postMessage(JSON.stringify({
-                        tipo: 'ACCION_USUARIO',
-                        detalle: 'Pulsación de modelo',
-                        modelo: obj.parent.userData.name || 'Modelo AR'
-                    }), "*");
+                    // Encontramos el ancestro que tiene los datos del modelo
+                    let target = intersects[0].object;
+                    while (target.parent && !target.userData.name) {
+                        target = target.parent;
+                    }
+
+                    if (target.userData.name) {
+                        enviarLogApp('PULSACION_MODELO', target.userData.name, target.userData.id);
+                        // Pequeño efecto visual o sonido extra podría ir aquí
+                    }
                 }
             });
 
             await mindarThree.start();
-            renderer.setAnimationLoop(() => renderer.render(scene, camera));
+            document.querySelector("#ui").style.display = "none";
+
+            const clock = new THREE.Clock();
+            renderer.setAnimationLoop(() => {
+                const delta = clock.getDelta();
+                mixers.forEach(m => m.update(delta));
+                renderer.render(scene, camera);
+            });
         }
-        start();
+
+        // Función puente hacia React Native
+        const enviarLogApp = (tipoAccion, nombreModelo, index) => {
+            if (window.ReactNativeWebView) {
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                    tipo: 'ACCION_USUARIO',
+                    detalle: tipoAccion,
+                    modelo: nombreModelo,
+                    targetIdx: index
+                }));
+            }
+        };
+
+        document.querySelector("#startButton").addEventListener('click', start);
     </script>
 </body>
 </html>
