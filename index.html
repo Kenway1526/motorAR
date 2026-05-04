@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Tetra Pak AR - Fix Audio & Drag</title>
+    <title>Tetra Pak AR - Engine</title>
     <script type="importmap">
     {
       "imports": {
@@ -13,7 +13,7 @@
     }
     </script>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; font-family: monospace; touch-action: none; }
+        body { margin: 0; overflow: hidden; background: #000; touch-action: none; font-family: sans-serif; }
         #container { width: 100vw; height: 100vh; }
         #ui {
             position: absolute; top: 0; left: 0; z-index: 10; width: 100%; height: 100%;
@@ -21,17 +21,17 @@
             background: rgba(0, 0, 0, 0.8); color: #00ff00;
         }
         .btn-start {
-            padding: 15px 30px; background: #00ff00; color: black;
-            border: none; border-radius: 5px; cursor: pointer; font-weight: bold;
+            padding: 18px 35px; background: #00ff00; color: black;
+            border: none; border-radius: 10px; cursor: pointer; font-weight: bold; font-size: 18px;
         }
     </style>
 </head>
 <body>
     <div id="ui">
         <div style="text-align: center;">
-            <h2>SISTEMA AR INTERACTIVO</h2>
-            <button id="startButton" class="btn-start">INICIAR ESCANEO</button>
-            <p id="status">Esperando interacción...</p>
+            <h2 style="color: #fff; margin-bottom: 20px;">SISTEMA AR MULTIUSUARIO</h2>
+            <button id="startButton" class="btn-start">INICIAR ESCANEO TETRA</button>
+            <p id="status" style="color: #00ff00; margin-top: 15px;">Listo para iniciar</p>
         </div>
     </div>
     <div id="container"></div>
@@ -42,16 +42,13 @@
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
         let mindarThree, scene, camera, renderer;
-        const mixers = [];
-        const sounds = [];
-        const clickableModels = [];
-        let isLogging = false;
-        
-        let selectedObject = null;
+        const mixers = [], sounds = [], clickableModels = [];
+        let isDragging = false, selectedObject = null, isLogging = false;
+        let previousMousePosition = { x: 0, y: 0 };
+
         const raycaster = new THREE.Raycaster();
         const mouse = new THREE.Vector2();
-        const dragPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
-        const intersectionPoint = new THREE.Vector3();
+        const status = document.querySelector("#status");
 
         const CONFIG = [
             { model: 'robot.glb', sound: 's1.mp3', scale: 0.15 },
@@ -61,40 +58,41 @@
         ];
 
         const start = async () => {
+            status.innerText = "Inicializando hardware...";
+
             mindarThree = new MindARThree({
                 container: document.querySelector("#container"),
-                imageTargetSrc: './targetstetra.mind',
-                filterMinCF: 0.0001,
-                filterBeta: 0.001
+                imageTargetSrc: './targetstetra.mind', 
             });
 
             ({ renderer, scene, camera } = mindarThree);
-            scene.add(new THREE.HemisphereLight(0xffffff, 0xbbbbff, 2));
+            scene.add(new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1.5));
 
-            // INICIALIZACIÓN DE AUDIO
             const listener = new THREE.AudioListener();
             camera.add(listener);
             const audioLoader = new THREE.AudioLoader();
-
             const loader = new GLTFLoader();
 
-            CONFIG.forEach((data, index) => {
-                const anchor = mindarThree.addAnchor(index);
-
-                // Cargar sonido correspondiente
-                const sound = new THREE.Audio(listener);
+            CONFIG.forEach((data, i) => {
+                const anchor = mindarThree.addAnchor(i);
+                
+                // Cargar Sonido Individual
+                const s = new THREE.Audio(listener);
                 audioLoader.load(data.sound, (buffer) => {
-                    sound.setBuffer(buffer);
-                    sound.setLoop(false);
-                    sound.setVolume(0.5);
+                    s.setBuffer(buffer);
+                    s.setVolume(0.5);
                 });
-                sounds[index] = sound;
+                sounds[i] = s;
 
+                // Cargar Modelo
                 loader.load(data.model, (gltf) => {
                     const model = gltf.scene;
                     model.scale.set(data.scale, data.scale, data.scale);
                     model.rotation.x = Math.PI / 2;
-                    model.userData = { name: data.model, id: index };
+                    
+                    // ID para el log multiusuario
+                    model.userData = { name: data.model };
+                    
                     anchor.group.add(model);
                     clickableModels.push(model);
 
@@ -106,81 +104,91 @@
                 });
 
                 anchor.onTargetFound = () => {
-                    if (sounds[index]) sounds[index].play(); // Play al detectar
+                    status.innerText = `Detectado: ${data.model}`;
+                    if (sounds[i] && !sounds[i].isPlaying) sounds[i].play();
+                    
+                    // Registro automático de detección
                     if (!isLogging) {
-                        enviarLogApp('DETECCION', data.model, index);
-                        bloquearLogsTemporales();
+                        enviarLog('DETECCION_AUTO', data.model);
+                        bloquearLogs();
                     }
                 };
 
                 anchor.onTargetLost = () => {
-                    if (sounds[index]) sounds[index].pause(); // Pause al perder
+                    status.innerText = "Buscando cubo...";
+                    if (sounds[i]) sounds[i].pause();
                 };
             });
 
-            // SOPORTE TÁCTIL PARA ARRASTRE
-            const onPointerDown = (e) => {
-                actualizarMouse(e);
+            // GESTIÓN TÁCTIL (Desplazamiento Delta)
+            const container = document.querySelector("#container");
+            
+            container.addEventListener('pointerdown', (e) => {
+                mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+                mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
                 raycaster.setFromCamera(mouse, camera);
+                
                 const intersects = raycaster.intersectObjects(clickableModels, true);
 
                 if (intersects.length > 0) {
+                    isDragging = true;
+                    // Buscar el padre que contiene el nombre del modelo
                     let target = intersects[0].object;
                     while (target.parent && !target.userData.name) target = target.parent;
+                    
                     selectedObject = target;
+                    previousMousePosition = { x: e.clientX, y: e.clientY };
 
+                    // Log de interacción manual
                     if (!isLogging) {
-                        enviarLogApp('INTERACCION_MANUAL', target.userData.name, target.userData.id);
-                        bloquearLogsTemporales();
+                        enviarLog('MANIPULACION_TACTIL', target.userData.name);
+                        bloquearLogs();
                     }
                 }
-            };
+            });
 
-            const onPointerMove = (e) => {
-                if (!selectedObject) return;
-                actualizarMouse(e);
-                raycaster.setFromCamera(mouse, camera);
-                if (raycaster.ray.intersectPlane(dragPlane, intersectionPoint)) {
-                    selectedObject.position.x = intersectionPoint.x;
-                    selectedObject.position.y = intersectionPoint.y;
-                }
-            };
+            container.addEventListener('pointermove', (e) => {
+                if (!isDragging || !selectedObject) return;
+                
+                const deltaX = e.clientX - previousMousePosition.x;
+                const deltaY = e.clientY - previousMousePosition.y;
+                
+                // Mover modelo basado en el desplazamiento del dedo
+                selectedObject.position.x += deltaX * 0.005;
+                selectedObject.position.y -= deltaY * 0.005; 
+                
+                previousMousePosition = { x: e.clientX, y: e.clientY };
+            });
 
-            window.addEventListener('pointerdown', onPointerDown);
-            window.addEventListener('pointermove', onPointerMove);
-            window.addEventListener('pointerup', () => { selectedObject = null; });
+            container.addEventListener('pointerup', () => {
+                isDragging = false;
+                selectedObject = null;
+            });
 
             await mindarThree.start();
             document.querySelector("#ui").style.display = "none";
+
             const clock = new THREE.Clock();
             renderer.setAnimationLoop(() => {
                 const delta = clock.getDelta();
                 mixers.forEach(m => m.update(delta));
                 renderer.render(scene, camera);
             });
-        }
-
-        const actualizarMouse = (e) => {
-            const x = e.touches ? e.touches[0].clientX : e.clientX;
-            const y = e.touches ? e.touches[0].clientY : e.clientY;
-            mouse.x = (x / window.innerWidth) * 2 - 1;
-            mouse.y = -(y / window.innerHeight) * 2 + 1;
         };
 
-        const bloquearLogsTemporales = () => {
-            isLogging = true;
-            setTimeout(() => { isLogging = false; }, 3000);
-        };
-
-        const enviarLogApp = (tipo, modelo, index) => {
+        const enviarLog = (accion, modelo) => {
             if (window.ReactNativeWebView) {
                 window.ReactNativeWebView.postMessage(JSON.stringify({
                     tipo: 'ACCION_USUARIO',
-                    detalle: tipo,
-                    modelo: modelo,
-                    targetIdx: index
+                    detalle: accion,
+                    modelo: modelo
                 }));
             }
+        };
+
+        const bloquearLogs = () => {
+            isLogging = true;
+            setTimeout(() => { isLogging = false; }, 4000); // 4 segundos de cooldown
         };
 
         document.querySelector("#startButton").addEventListener('click', start);
